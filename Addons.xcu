@@ -1,0 +1,89 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<oor:component-data xmlns:oor="http://openoffice.org/2001/registry" xmlns:xs="http://www.w3.org/2001/XMLSchema" oor:name="Addons" oor:package="org.openoffice.Office">
+  <node oor:name="AddonUI">
+    <node oor:name="OfficeMenuBar">
+      <node oor:name="cz.greencabinet.writer.gcimportimages.menu" oor:op="replace">
+        <prop oor:name="Title" oor:type="xs:string">
+          <value>GC Tools (Writer)</value>
+          <value xml:lang="cs">Nástroje GC (Writer)</value>
+          <value xml:lang="en">GC Tools (Writer)</value>
+          <value xml:lang="sk">Nástroje GC (Writer)</value>
+        </prop>
+        <prop oor:name="Target" oor:type="xs:string"><value>_self</value></prop>
+        <prop oor:name="Context" oor:type="xs:string"><value>com.sun.star.text.TextDocument</value></prop>
+        <node oor:name="Submenu">
+          <node oor:name="m1" oor:op="replace">
+            <prop oor:name="URL" oor:type="xs:string"><value>vnd.sun.star.script:GCImportImages.ImportImages.GC_IMPORT_IMAGES?language=Basic&amp;location=application</value></prop>
+            <prop oor:name="Title" oor:type="xs:string">
+          <value>Import images...</value>
+          <value xml:lang="cs">Import obrázků...</value>
+          <value xml:lang="en">Import images...</value>
+          <value xml:lang="sk">Import obrázkov...</value>
+            </prop>
+            <prop oor:name="Target" oor:type="xs:string"><value>_self</value></prop>
+            <prop oor:name="Context" oor:type="xs:string"><value>com.sun.star.text.TextDocument</value></prop>
+            <prop oor:name="ImageIdentifier" oor:type="xs:string"><value>%origin%/images/gcimport</value></prop>
+          </node>
+        </node>
+      </node>
+    </node>
+    <node oor:name="AddonMenu">
+      <node oor:name="cz.greencabinet.gcimportimages.addon1" oor:op="replace">
+        <prop oor:name="URL" oor:type="xs:string"><value>vnd.sun.star.script:GCImportImages.ImportImages.GC_IMPORT_IMAGES?language=Basic&amp;location=application</value></prop>
+        <prop oor:name="Title" oor:type="xs:string">
+          <value>Import images...</value>
+          <value xml:lang="cs">Import obrázků...</value>
+          <value xml:lang="en">Import images...</value>
+          <value xml:lang="sk">Import obrázkov...</value>
+        </prop>
+        <prop oor:name="Target" oor:type="xs:string"><value>_self</value></prop>
+        <prop oor:name="Context" oor:type="xs:string"><value>com.sun.star.text.TextDocument</value></prop>
+        <prop oor:name="ImageIdentifier" oor:type="xs:string"><value>%origin%/images/gcimport</value></prop>
+      </node>
+    </node>
+    <node oor:name="OfficeToolBar">
+      <node oor:name="cz.greencabinet.gcimportimages.toolbar" oor:op="replace">
+        <node oor:name="m1" oor:op="replace">
+          <prop oor:name="URL" oor:type="xs:string"><value>vnd.sun.star.script:GCImportImages.ImportImages.GC_IMPORT_IMAGES?language=Basic&amp;location=application</value></prop>
+          <prop oor:name="Title" oor:type="xs:string">
+          <value>Import images...</value>
+          <value xml:lang="cs">Import obrázků...</value>
+          <value xml:lang="en">Import images...</value>
+          <value xml:lang="sk">Import obrázkov...</value>
+          </prop>
+          <prop oor:name="Target" oor:type="xs:string"><value>_self</value></prop>
+          <prop oor:name="Context" oor:type="xs:string"><value>com.sun.star.text.TextDocument</value></prop>
+          <prop oor:name="ImageIdentifier" oor:type="xs:string"><value>%origin%/images/gcimport</value></prop>
+        </node>
+      </node>
+    </node>
+    <node oor:name="OfficeNotebookBar">
+      <node oor:name="cz.greencabinet.gcimportimages.ribbon" oor:op="replace">
+          <node oor:name="m1" oor:op="replace">
+            <prop oor:name="URL" oor:type="xs:string"><value>vnd.sun.star.script:GCImportImages.ImportImages.GC_IMPORT_IMAGES?language=Basic&amp;location=application</value></prop>
+            <prop oor:name="Title" oor:type="xs:string">
+              <value>Import images...</value>
+          <value xml:lang="cs">Import obrázků...</value>
+          <value xml:lang="en">Import images...</value>
+          <value xml:lang="sk">Import obrázkov...</value>
+            </prop>
+            <prop oor:name="ImageIdentifier" oor:type="xs:string"><value>%origin%/images/gcimport</value></prop>
+            <prop oor:name="Target" oor:type="xs:string"><value>_self</value></prop>
+            <prop oor:name="Context" oor:type="xs:string"><value>com.sun.star.text.TextDocument</value></prop>
+            <prop oor:name="ControlType" oor:type="xs:string"><value>Button</value></prop>
+            <prop oor:name="Width" oor:type="xs:long"><value>0</value></prop>
+            <prop oor:name="Style" oor:type="xs:string"><value>Large</value></prop>
+          </node>
+      </node>
+    </node>
+    <node oor:name="Images">
+      <node oor:name="cz.greencabinet.gcimportimages.image1" oor:op="replace">
+        <prop oor:name="URL" oor:type="xs:string"><value>vnd.sun.star.script:GCImportImages.ImportImages.GC_IMPORT_IMAGES?language=Basic&amp;location=application</value></prop>
+        <node oor:name="UserDefinedImages">
+          <prop oor:name="ImageSmallURL" oor:type="xs:string"><value>%origin%/images/gcimport_16.png</value></prop>
+          <prop oor:name="ImageBigURL" oor:type="xs:string"><value>%origin%/images/gcimport_26.png</value></prop>
+        </node>
+      </node>
+    </node>
+  </node>
+</oor:component-data>

@@ -1,0 +1,1 @@
+Hromadný import obrázků ze složky do dokumentu Writer. Volitelně včetně podsložek, automatická nebo vlastní šířka, mezera, popisek s názvem souboru, přirozené řazení podle názvu, velikosti nebo data. Spuštění: menu Nástroje GC > Import obrázků, nebo ikona na panelu nástrojů / v pásu karet (karta Rozšíření).

@@ -1,0 +1,1509 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE script:module PUBLIC "-//OpenOffice.org//DTD OfficeDocument 1.0//EN" "module.dtd">
+<script:module xmlns:script="http://openoffice.org/2000/script" script:name="ImportImages" script:language="StarBasic">Option Explicit
+
+' ============================================================
+' GC_IMPORT_IMAGES 5.1.0
+' Green Cabinet – hromadný import obrázků do Writeru
+'
+' Dialog se vytváří programově (žádný externí .xdl soubor),
+' takže makro funguje stejně v rozšíření i v Moje makra.
+' Rozměry (šířka obrázku, mezera) se zadávají v centimetrech.
+' ============================================================
+
+Global gGCIM_Dialog As Object
+Global gGCIM_Listener As Object
+Global gGCIM_TxtListener As Object
+Global gGCIM_ItemListener As Object
+Global gGCIM_ImportRequested As Boolean
+Global gGCIM_LastFolder As String
+
+' Jazykové tabulky (viz sekce PŘEKLADY na konci modulu)
+Global gGCIM_Ready As Boolean
+Global gGCIM_TabLang As String
+Global gGCIM_TabEn As String
+Global gGCIM_LastErr As String   ' poslední chyba načítání překladů (diagnostika)
+Global gGCIM_ForceLang As String   ' jen pro testy, např. "sk"
+
+' Nastavení importu (plní se z dialogu)
+Global gO_Auto As Boolean
+Global gO_CustomW As Long
+Global gO_MaxW As Long
+Global gO_MaxH As Long
+Global gO_Spacing As Long
+Global gO_Caption As Boolean
+
+' Tichý režim (jen pro testování) – zprávy se ukládají do logu.
+Global gGCIM_Quiet As Boolean
+Global gGCIM_Log As String
+
+
+
+' ------------------------------------------------------------
+' HLAVNÍ MAKRO
+' ------------------------------------------------------------
+
+Sub GC_IMPORT_IMAGES()
+
+    On Error GoTo ErrorHandler
+
+    Dim oDoc As Object
+
+    oDoc = ThisComponent
+
+    If IsNull(oDoc) Then
+        GCIM_Msg GCIM_T("MSG_NO_DOC"), 48, GCIM_T("TITLE")
+        Exit Sub
+    End If
+
+    If Not oDoc.supportsService("com.sun.star.text.TextDocument") Then
+        GCIM_Msg GCIM_T("MSG_WRITER_ONLY"), _
+            48, GCIM_T("TITLE")
+        Exit Sub
+    End If
+
+    gGCIM_Dialog = GCIM_CreateDialog(oDoc)
+    gGCIM_ImportRequested = False
+
+    GCIM_AttachListeners
+    GCIM_ToggleWidth
+    GCIM_UpdateCount
+
+    gGCIM_Dialog.execute()
+
+    If gGCIM_ImportRequested Then
+        GCIM_ImportImages oDoc
+    End If
+
+    GCIM_CloseDialog
+
+    Exit Sub
+
+ErrorHandler:
+
+    GCIM_Msg GCIM_T("MSG_START_ERR") &amp; _
+        Chr(10) &amp; Chr(10) &amp; _
+        GCIM_T("ERR_LABEL", Err &amp; " – " &amp; Error$), 16, GCIM_T("TITLE")
+
+    GCIM_CloseDialog
+
+End Sub
+
+
+Sub GCIM_CloseDialog()
+
+    On Error Resume Next
+
+    If Not IsNull(gGCIM_Dialog) Then
+        gGCIM_Dialog.dispose()
+    End If
+
+    gGCIM_Dialog = Nothing
+    gGCIM_Listener = Nothing
+    gGCIM_TxtListener = Nothing
+    gGCIM_ItemListener = Nothing
+
+End Sub
+
+
+' ------------------------------------------------------------
+' VYTVOŘENÍ DIALOGU (programově)
+' ------------------------------------------------------------
+
+Function GCIM_Add( _
+    oDM As Object, sService As String, sName As String, _
+    x As Long, y As Long, w As Long, h As Long) As Object
+
+    Dim oM As Object
+
+    oM = oDM.createInstance("com.sun.star.awt." &amp; sService)
+
+    oM.Name = sName
+    oM.PositionX = x
+    oM.PositionY = y
+    oM.Width = w
+    oM.Height = h
+    oM.TabIndex = UBound(oDM.getElementNames()) + 1
+
+    oDM.insertByName(sName, oM)
+
+    GCIM_Add = oM
+
+End Function
+
+
+Function GCIM_CreateDialog(oDoc As Object) As Object
+
+    Dim oDM As Object
+    Dim oM As Object
+    Dim oDlg As Object
+    Dim oToolkit As Object
+    Dim oParent As Object
+
+    oDM = CreateUnoService("com.sun.star.awt.UnoControlDialogModel")
+
+    oDM.Width = 270
+    oDM.Height = 209
+    oDM.Title = GCIM_T("DLG_TITLE")
+
+    ' --- Složka ---
+    oM = GCIM_Add(oDM, "UnoControlFixedTextModel", "lblFolder", 6, 6, 150, 10)
+    oM.Label = GCIM_T("LBL_FOLDER")
+
+    oM = GCIM_Add(oDM, "UnoControlEditModel", "txtFolder", 6, 17, 196, 12)
+    oM.Text = gGCIM_LastFolder
+
+    oM = GCIM_Add(oDM, "UnoControlButtonModel", "cmdBrowse", 206, 16, 58, 14)
+    oM.Label = GCIM_T("BTN_BROWSE")
+
+    oM = GCIM_Add(oDM, "UnoControlCheckBoxModel", "chkSub", 6, 33, 200, 10)
+    oM.Label = GCIM_T("CHK_SUB")
+    oM.State = 0
+
+    oM = GCIM_Add(oDM, "UnoControlFixedTextModel", "lblCount", 6, 46, 258, 10)
+    oM.Label = ""
+
+    ' --- Velikost ---
+    oM = GCIM_Add(oDM, "UnoControlFixedLineModel", "lineSize", 6, 60, 258, 8)
+    oM.Label = GCIM_T("GRP_SIZE")
+
+    oM = GCIM_Add(oDM, "UnoControlRadioButtonModel", "optAuto", 10, 72, 250, 10)
+    oM.Label = GCIM_T("OPT_AUTO")
+    oM.State = 1
+
+    oM = GCIM_Add(oDM, "UnoControlRadioButtonModel", "optCustom", 10, 85, 100, 10)
+    oM.Label = GCIM_T("OPT_CUSTOM")
+    oM.State = 0
+
+    oM = GCIM_Add(oDM, "UnoControlNumericFieldModel", "numWidth", 115, 83, 45, 12)
+    oM.DecimalAccuracy = 2
+    oM.ValueMin = 0.1
+    oM.ValueMax = 500
+    oM.ValueStep = 0.5
+    oM.Spin = True
+    oM.ShowThousandsSeparator = False
+    oM.Value = 15
+
+    ' --- Rozvržení ---
+    oM = GCIM_Add(oDM, "UnoControlFixedLineModel", "lineLayout", 6, 101, 258, 8)
+    oM.Label = GCIM_T("GRP_LAYOUT")
+
+    oM = GCIM_Add(oDM, "UnoControlFixedTextModel", "lblSpacing", 10, 114, 100, 10)
+    oM.Label = GCIM_T("LBL_SPACING")
+
+    oM = GCIM_Add(oDM, "UnoControlNumericFieldModel", "numSpacing", 115, 112, 45, 12)
+    oM.DecimalAccuracy = 2
+    oM.ValueMin = 0
+    oM.ValueMax = 50
+    oM.ValueStep = 0.1
+    oM.Spin = True
+    oM.ShowThousandsSeparator = False
+    oM.Value = 0.5
+
+    oM = GCIM_Add(oDM, "UnoControlFixedTextModel", "lblPos", 10, 130, 100, 10)
+    oM.Label = GCIM_T("LBL_POS")
+
+    oM = GCIM_Add(oDM, "UnoControlListBoxModel", "lstPos", 115, 128, 145, 12)
+    oM.Dropdown = True
+    oM.StringItemList = Array(GCIM_T("POS_END"), GCIM_T("POS_CURSOR"))
+    oM.SelectedItems = Array(0)
+
+    oM = GCIM_Add(oDM, "UnoControlCheckBoxModel", "chkCaption", 10, 145, 250, 10)
+    oM.Label = GCIM_T("CHK_CAPTION")
+    oM.State = 0
+
+    ' --- Řazení ---
+    oM = GCIM_Add(oDM, "UnoControlFixedLineModel", "lineSort", 6, 161, 258, 8)
+    oM.Label = GCIM_T("GRP_SORT")
+
+    oM = GCIM_Add(oDM, "UnoControlListBoxModel", "lstSort", 10, 173, 100, 12)
+    oM.Dropdown = True
+    oM.StringItemList = Array(GCIM_T("SORT_NAME"), GCIM_T("SORT_SIZE"), GCIM_T("SORT_DATE"))
+    oM.SelectedItems = Array(0)
+
+    oM = GCIM_Add(oDM, "UnoControlRadioButtonModel", "optSortAsc", 118, 175, 65, 10)
+    oM.Label = GCIM_T("OPT_ASC")
+    oM.State = 1
+
+    oM = GCIM_Add(oDM, "UnoControlRadioButtonModel", "optSortDesc", 188, 175, 70, 10)
+    oM.Label = GCIM_T("OPT_DESC")
+    oM.State = 0
+
+    ' --- Tlačítka ---
+    oM = GCIM_Add(oDM, "UnoControlButtonModel", "cmdImport", 148, 191, 58, 14)
+    oM.Label = GCIM_T("BTN_IMPORT")
+    oM.DefaultButton = True
+
+    oM = GCIM_Add(oDM, "UnoControlButtonModel", "cmdCancel", 210, 191, 54, 14)
+    oM.Label = GCIM_T("BTN_CANCEL")
+
+    oDlg = CreateUnoService("com.sun.star.awt.UnoControlDialog")
+    oDlg.setModel(oDM)
+    oDlg.setVisible(False)
+
+    oToolkit = CreateUnoService("com.sun.star.awt.Toolkit")
+
+    On Error Resume Next
+    oParent = oDoc.CurrentController.Frame.ContainerWindow
+    On Error GoTo 0
+
+    If IsNull(oParent) Or IsEmpty(oParent) Then
+        oDlg.createPeer(oToolkit, Null)
+    Else
+        oDlg.createPeer(oToolkit, oParent)
+    End If
+
+    GCIM_CreateDialog = oDlg
+
+End Function
+
+
+Sub GCIM_AttachListeners()
+
+    gGCIM_Listener = CreateUnoListener( _
+        "GCIM_Dlg_", "com.sun.star.awt.XActionListener")
+
+    gGCIM_Dialog.getControl("cmdBrowse").addActionListener(gGCIM_Listener)
+    gGCIM_Dialog.getControl("cmdImport").addActionListener(gGCIM_Listener)
+    gGCIM_Dialog.getControl("cmdCancel").addActionListener(gGCIM_Listener)
+
+    gGCIM_TxtListener = CreateUnoListener( _
+        "GCIM_Txt_", "com.sun.star.awt.XTextListener")
+
+    gGCIM_Dialog.getControl("txtFolder").addTextListener(gGCIM_TxtListener)
+
+    gGCIM_ItemListener = CreateUnoListener( _
+        "GCIM_Opt_", "com.sun.star.awt.XItemListener")
+
+    gGCIM_Dialog.getControl("optAuto").addItemListener(gGCIM_ItemListener)
+    gGCIM_Dialog.getControl("optCustom").addItemListener(gGCIM_ItemListener)
+
+    gGCIM_Dialog.getControl("chkSub").addItemListener(gGCIM_ItemListener)
+
+End Sub
+
+
+Function GCIM_M(sName As String) As Object
+
+    GCIM_M = gGCIM_Dialog.getModel().getByName(sName)
+
+End Function
+
+
+' ------------------------------------------------------------
+' OBSLUHA UDÁLOSTÍ DIALOGU
+' ------------------------------------------------------------
+
+Sub GCIM_Dlg_actionPerformed(oEvent)
+
+    On Error GoTo ErrorHandler
+
+    Dim oPicker As Object
+    Dim sCurrent As String
+
+    Select Case oEvent.Source.Model.Name
+
+        Case "cmdBrowse"
+
+            oPicker = CreateUnoService("com.sun.star.ui.dialogs.FolderPicker")
+            oPicker.setTitle(GCIM_T("PICK_TITLE"))
+
+            On Error Resume Next
+            sCurrent = GCIM_FolderURL(GCIM_M("txtFolder").Text)
+            If sCurrent &lt;&gt; "" Then oPicker.setDisplayDirectory(sCurrent)
+            On Error GoTo ErrorHandler
+
+            If oPicker.execute() = 1 Then
+                GCIM_M("txtFolder").Text = ConvertFromURL(oPicker.getDirectory())
+                GCIM_UpdateCount
+            End If
+
+        Case "cmdImport"
+
+            gGCIM_ImportRequested = True
+            gGCIM_Dialog.endExecute()
+
+        Case "cmdCancel"
+
+            gGCIM_ImportRequested = False
+            gGCIM_Dialog.endExecute()
+
+    End Select
+
+    Exit Sub
+
+ErrorHandler:
+
+    GCIM_Msg GCIM_T("MSG_DLG_ERR") &amp; Chr(10) &amp; _
+        Err &amp; " – " &amp; Error$, 16, GCIM_T("TITLE")
+
+End Sub
+
+
+Sub GCIM_Dlg_disposing(oEvent)
+End Sub
+
+
+Sub GCIM_Txt_textChanged(oEvent)
+
+    GCIM_UpdateCount
+
+End Sub
+
+
+Sub GCIM_Txt_disposing(oEvent)
+End Sub
+
+
+Sub GCIM_Opt_itemStateChanged(oEvent)
+
+    On Error Resume Next
+
+    If oEvent.Source.Model.Name = "chkSub" Then
+        GCIM_UpdateCount
+    Else
+        GCIM_ToggleWidth
+    End If
+
+End Sub
+
+
+Sub GCIM_Opt_disposing(oEvent)
+End Sub
+
+
+Sub GCIM_ToggleWidth()
+
+    On Error Resume Next
+
+    GCIM_M("numWidth").Enabled = (GCIM_M("optCustom").State = 1)
+
+End Sub
+
+
+' ------------------------------------------------------------
+' AKTUALIZACE POČTU OBRÁZKŮ
+' ------------------------------------------------------------
+
+Sub GCIM_UpdateCount()
+
+    On Error GoTo ErrorHandler
+
+    Dim sFolder As String
+    Dim oSFA As Object
+    Dim aImages As Variant
+    Dim oLabel As Object
+
+    If IsNull(gGCIM_Dialog) Then Exit Sub
+
+    oLabel = GCIM_M("lblCount")
+    sFolder = GCIM_FolderURL(GCIM_M("txtFolder").Text)
+
+    If sFolder = "" Then
+        oLabel.Label = GCIM_T("CNT_SELECT")
+        Exit Sub
+    End If
+
+    oSFA = CreateUnoService("com.sun.star.ucb.SimpleFileAccess")
+
+    If Not oSFA.exists(sFolder) Then
+        oLabel.Label = GCIM_T("CNT_NOFOLDER")
+        Exit Sub
+    End If
+
+    If Not oSFA.isFolder(sFolder) Then
+        oLabel.Label = GCIM_T("CNT_NOTFOLDER")
+        Exit Sub
+    End If
+
+    aImages = GCIM_Scan(sFolder, oSFA, (GCIM_M("chkSub").State = 1))
+
+    oLabel.Label = GCIM_T("CNT_FOUND", UBound(aImages) + 1)
+
+    Exit Sub
+
+ErrorHandler:
+
+    On Error Resume Next
+    GCIM_M("lblCount").Label = GCIM_T("CNT_FAIL")
+
+End Sub
+
+
+' ------------------------------------------------------------
+' IMPORT OBRÁZKŮ
+' ------------------------------------------------------------
+
+Sub GCIM_ImportImages(oDoc As Object)
+
+    On Error GoTo ErrorHandler
+
+    Dim oText As Object
+    Dim oCursor As Object
+    Dim oVC As Object
+    Dim oSFA As Object
+    Dim oProvider As Object
+    Dim oStatus As Object
+    Dim aImages As Variant
+    Dim aSel As Variant
+    Dim sFolder As String
+    Dim sFailed As String
+    Dim sMsg As String
+    Dim nCount As Long
+    Dim nImported As Long
+    Dim nFailed As Long
+    Dim nSort As Long
+    Dim nPos As Long
+    Dim i As Long
+    Dim dWidth As Double
+    Dim dSpacing As Double
+    Dim bAscending As Boolean
+    Dim bBreak As Boolean
+    Dim bLocked As Boolean
+    Dim bUndo As Boolean
+    Dim sMode As String
+
+    sFolder = GCIM_FolderURL(GCIM_M("txtFolder").Text)
+
+    If sFolder = "" Then
+        GCIM_Msg GCIM_T("MSG_SELECT_FIRST"), 48, GCIM_T("TITLE")
+        Exit Sub
+    End If
+
+    oSFA = CreateUnoService("com.sun.star.ucb.SimpleFileAccess")
+
+    If Not oSFA.exists(sFolder) Then
+        GCIM_Msg GCIM_T("MSG_FOLDER_UNAVAIL"), 48, GCIM_T("TITLE")
+        Exit Sub
+    End If
+
+    If Not oSFA.isFolder(sFolder) Then
+        GCIM_Msg GCIM_T("MSG_NOT_FOLDER"), 48, GCIM_T("TITLE")
+        Exit Sub
+    End If
+
+    gGCIM_LastFolder = GCIM_M("txtFolder").Text
+
+    aImages = GCIM_Scan(sFolder, oSFA, (GCIM_M("chkSub").State = 1))
+    nCount = UBound(aImages) + 1
+
+    If nCount = 0 Then
+        GCIM_Msg GCIM_T("MSG_NO_IMAGES"), 48, GCIM_T("TITLE")
+        Exit Sub
+    End If
+
+    ' ----- Možnosti z dialogu -----
+    gO_Auto = Not (GCIM_M("optCustom").State = 1)
+    bAscending = Not (GCIM_M("optSortDesc").State = 1)
+    gO_Caption = (GCIM_M("chkCaption").State = 1)
+
+    dWidth = GCIM_M("numWidth").Value
+    dSpacing = GCIM_M("numSpacing").Value
+
+    If Not gO_Auto And dWidth &lt;= 0 Then
+        GCIM_Msg GCIM_T("MSG_BAD_WIDTH"), 48, GCIM_T("TITLE")
+        Exit Sub
+    End If
+
+    If dSpacing &lt; 0 Then dSpacing = 0
+
+    ' cm -&gt; 1/100 mm
+    gO_CustomW = CLng(dWidth * 1000)
+    gO_Spacing = CLng(dSpacing * 1000)
+
+    nSort = 0
+    aSel = GCIM_M("lstSort").SelectedItems
+    If UBound(aSel) &gt;= 0 Then nSort = aSel(0)
+
+    Select Case nSort
+        Case 1
+            sMode = "size"
+        Case 2
+            sMode = "date"
+        Case Else
+            sMode = "name"
+    End Select
+
+    nPos = 0
+    aSel = GCIM_M("lstPos").SelectedItems
+    If UBound(aSel) &gt;= 0 Then nPos = aSel(0)
+
+    ' ----- Místo vložení -----
+    If nPos = 1 Then
+
+        oVC = oDoc.CurrentController.ViewCursor
+        oText = oVC.getText()
+        oCursor = oText.createTextCursorByRange(oVC.getStart())
+        oCursor.gotoEndOfParagraph(False)
+        bBreak = True
+
+    Else
+
+        oText = oDoc.getText()
+        oCursor = oText.createTextCursor()
+        oCursor.gotoEnd(False)
+
+        ' Prázdný dokument: první obrázek nepotřebuje nový odstavec.
+        bBreak = (Len(oText.getString()) &gt; 0) Or _
+            (oDoc.getGraphicObjects().getCount() &gt; 0) Or _
+            (oDoc.getTextTables().getCount() &gt; 0)
+
+    End If
+
+    ' ----- Využitelná plocha stránky -----
+    GCIM_GetPageArea oDoc, oCursor, gO_MaxW, gO_MaxH
+
+    If gO_MaxW &lt;= 0 Or gO_MaxH &lt;= 0 Then
+        GCIM_Msg GCIM_T("MSG_BAD_AREA"), 16, GCIM_T("TITLE")
+        Exit Sub
+    End If
+
+    aImages = GCIM_SortImages(aImages, sMode, bAscending, oSFA)
+
+    oProvider = CreateUnoService("com.sun.star.graphic.GraphicProvider")
+
+    ' Rychlejší import + jeden krok Zpět.
+    oDoc.lockControllers()
+    bLocked = True
+
+    On Error Resume Next
+    oDoc.UndoManager.enterUndoContext(GCIM_T("UNDO_NAME"))
+    If Err = 0 Then bUndo = True
+    oStatus = oDoc.CurrentController.StatusIndicator
+    oStatus.start(GCIM_T("UNDO_NAME"), nCount)
+    On Error GoTo ErrorHandler
+
+    nImported = 0
+    nFailed = 0
+    sFailed = ""
+
+    For i = 0 To nCount - 1
+
+        If GCIM_InsertOneImage(oDoc, oText, oCursor, oProvider, _
+            CStr(aImages(i)), bBreak) Then
+
+            nImported = nImported + 1
+            bBreak = True
+
+        Else
+
+            nFailed = nFailed + 1
+            If nFailed &lt;= 10 Then
+                sFailed = sFailed &amp; Chr(10) &amp; GCIM_FileName(CStr(aImages(i)))
+            End If
+
+        End If
+
+        On Error Resume Next
+        oStatus.setValue(i + 1)
+        On Error GoTo ErrorHandler
+
+    Next i
+
+    On Error Resume Next
+    oStatus.end()
+    On Error GoTo ErrorHandler
+
+    If bUndo Then oDoc.UndoManager.leaveUndoContext()
+    bUndo = False
+    oDoc.unlockControllers()
+    bLocked = False
+
+    sMsg = GCIM_T("MSG_DONE", nCount, nImported)
+
+    If nFailed &gt; 0 Then
+        sMsg = sMsg &amp; Chr(10) &amp; Chr(10) &amp; GCIM_T("MSG_FAILED", nFailed) &amp; sFailed
+        If nFailed &gt; 10 Then sMsg = sMsg &amp; Chr(10) &amp; "..."
+    End If
+
+    GCIM_Msg sMsg, 64, GCIM_T("TITLE")
+
+    Exit Sub
+
+ErrorHandler:
+
+    sMsg = GCIM_T("MSG_IMPORT_ERR") &amp; Chr(10) &amp; Chr(10) &amp; _
+        GCIM_T("ERR_LABEL", Err &amp; " – " &amp; Error$)
+
+    On Error Resume Next
+    oStatus.end()
+    If bUndo Then oDoc.UndoManager.leaveUndoContext()
+    If bLocked Then oDoc.unlockControllers()
+
+    GCIM_Msg sMsg, 16, GCIM_T("TITLE")
+
+End Sub
+
+
+' ------------------------------------------------------------
+' VLOŽENÍ JEDNOHO OBRÁZKU
+' ------------------------------------------------------------
+
+Function GCIM_InsertOneImage( _
+    oDoc As Object, _
+    oText As Object, _
+    oCursor As Object, _
+    oProvider As Object, _
+    sURL As String, _
+    bBreak As Boolean) As Boolean
+
+    On Error GoTo ErrorHandler
+
+    Dim oGraphic As Object
+    Dim oGraphicObject As Object
+    Dim aArgs(0) As New com.sun.star.beans.PropertyValue
+    Dim aLS As New com.sun.star.style.LineSpacing
+    Dim nW As Long
+    Dim nH As Long
+    Dim nNewW As Long
+    Dim nNewH As Long
+
+    GCIM_InsertOneImage = False
+
+    If Not GCIM_GetImageSize(oProvider, sURL, nW, nH) Then Exit Function
+
+    If gO_Auto Then
+        nNewW = nW
+        nNewH = nH
+    Else
+        nNewW = gO_CustomW
+        nNewH = CLng(nH * nNewW / nW)
+    End If
+
+    ' Nikdy nepřekročit využitelnou plochu stránky.
+    If nNewW &gt; gO_MaxW Then
+        nNewH = CLng(nNewH * gO_MaxW / nNewW)
+        nNewW = gO_MaxW
+    End If
+
+    If nNewH &gt; gO_MaxH Then
+        nNewW = CLng(nNewW * gO_MaxH / nNewH)
+        nNewH = gO_MaxH
+    End If
+
+    If nNewW &lt;= 0 Or nNewH &lt;= 0 Then Exit Function
+
+    aArgs(0).Name = "URL"
+    aArgs(0).Value = sURL
+    oGraphic = oProvider.queryGraphic(aArgs())
+    If IsNull(oGraphic) Then Exit Function
+
+    ' Nový odstavec pro každý obrázek.
+    If bBreak Then
+        oText.insertControlCharacter(oCursor, _
+            com.sun.star.text.ControlCharacter.PARAGRAPH_BREAK, False)
+    End If
+
+    ' Formát odstavce nastavíme před vložením.
+    aLS.Mode = 0
+    aLS.Height = 100
+
+    On Error Resume Next
+    oCursor.ParaStyleName = "Standard"
+    On Error GoTo ErrorHandler
+
+    oCursor.ParaAdjust = com.sun.star.style.ParagraphAdjust.CENTER
+    oCursor.ParaLineSpacing = aLS
+    oCursor.ParaTopMargin = 0
+    oCursor.ParaLeftMargin = 0
+    oCursor.ParaRightMargin = 0
+    oCursor.ParaFirstLineIndent = 0
+    oCursor.ParaKeepTogether = gO_Caption
+
+    If gO_Caption Then
+        oCursor.ParaBottomMargin = 0
+    Else
+        oCursor.ParaBottomMargin = gO_Spacing
+    End If
+
+    oGraphicObject = oDoc.createInstance("com.sun.star.text.TextGraphicObject")
+
+    oGraphicObject.Graphic = oGraphic
+
+    oGraphicObject.AnchorType = _
+        com.sun.star.text.TextContentAnchorType.AS_CHARACTER
+    oGraphicObject.Width = nNewW
+    oGraphicObject.Height = nNewH
+
+    On Error Resume Next
+    oGraphicObject.Description = GCIM_FileName(sURL)
+    On Error GoTo ErrorHandler
+
+    oText.insertTextContent(oCursor, oGraphicObject, False)
+    oCursor.gotoEndOfParagraph(False)
+
+    ' Popisek pod obrázkem.
+    If gO_Caption Then
+
+        oText.insertControlCharacter(oCursor, _
+            com.sun.star.text.ControlCharacter.PARAGRAPH_BREAK, False)
+
+        On Error Resume Next
+        oCursor.ParaStyleName = "Caption"
+        On Error GoTo ErrorHandler
+
+        oCursor.ParaAdjust = com.sun.star.style.ParagraphAdjust.CENTER
+        oCursor.ParaKeepTogether = False
+        oCursor.ParaTopMargin = 0
+        oCursor.ParaBottomMargin = gO_Spacing
+
+        oText.insertString(oCursor, GCIM_BaseName(sURL), False)
+        oCursor.gotoEndOfParagraph(False)
+
+    End If
+
+    GCIM_InsertOneImage = True
+
+    Exit Function
+
+ErrorHandler:
+
+    GCIM_InsertOneImage = False
+
+End Function
+
+
+' ------------------------------------------------------------
+' ROZMĚR OBRÁZKU (1/100 mm) BEZ NAČÍTÁNÍ DO DOKUMENTU
+' ------------------------------------------------------------
+
+Function GCIM_GetImageSize( _
+    oProvider As Object, _
+    sURL As String, _
+    ByRef nW As Long, _
+    ByRef nH As Long) As Boolean
+
+    On Error GoTo ErrorHandler
+
+    Dim aArgs(0) As New com.sun.star.beans.PropertyValue
+    Dim oDesc As Object
+    Dim aSize As Object
+
+    GCIM_GetImageSize = False
+    nW = 0
+    nH = 0
+
+    aArgs(0).Name = "URL"
+    aArgs(0).Value = sURL
+
+    oDesc = oProvider.queryGraphicDescriptor(aArgs())
+
+    If IsNull(oDesc) Then Exit Function
+
+    aSize = oDesc.Size100thMM
+    nW = aSize.Width
+    nH = aSize.Height
+
+    ' Bez DPI informace: přepočet z pixelů při 96 dpi.
+    If nW &lt;= 0 Or nH &lt;= 0 Then
+        aSize = oDesc.SizePixel
+        nW = CLng(aSize.Width * 2540 / 96)
+        nH = CLng(aSize.Height * 2540 / 96)
+    End If
+
+    GCIM_GetImageSize = (nW &gt; 0 And nH &gt; 0)
+
+    Exit Function
+
+ErrorHandler:
+
+    GCIM_GetImageSize = False
+
+End Function
+
+
+' ------------------------------------------------------------
+' VYUŽITELNÁ PLOCHA STRÁNKY
+' ------------------------------------------------------------
+
+Sub GCIM_GetPageArea( _
+    oDoc As Object, _
+    oCursor As Object, _
+    ByRef nMaxWidth As Long, _
+    ByRef nMaxHeight As Long)
+
+    On Error GoTo Fallback
+
+    Dim sStyle As String
+    Dim oStyle As Object
+
+    sStyle = oCursor.PageStyleName
+
+    If sStyle = "" Then sStyle = "Standard"
+
+    oStyle = oDoc.StyleFamilies.getByName("PageStyles").getByName(sStyle)
+
+    nMaxWidth = oStyle.Width - oStyle.LeftMargin - oStyle.RightMargin
+    nMaxHeight = oStyle.Height - oStyle.TopMargin - oStyle.BottomMargin
+
+    If oStyle.HeaderIsOn Then nMaxHeight = nMaxHeight - oStyle.HeaderHeight
+    If oStyle.FooterIsOn Then nMaxHeight = nMaxHeight - oStyle.FooterHeight
+
+    ' Rezerva (popisek, odsazení).
+    nMaxHeight = nMaxHeight - 1500
+
+    Exit Sub
+
+Fallback:
+
+    ' Záložní hodnoty pro A4 s okraji 2 cm.
+    nMaxWidth = 17000
+    nMaxHeight = 24000
+
+End Sub
+
+
+' ------------------------------------------------------------
+' SBĚR A ŘAZENÍ SOUBORŮ
+' ------------------------------------------------------------
+
+Function GCIM_Scan(sFolder As String, oSFA As Object, bSub As Boolean) As Variant
+
+    Dim aItems As Variant
+    Dim aFiles() As String
+    Dim aDirs() As String
+    Dim aSubs() As Variant
+    Dim aFinal() As String
+    Dim vTmp As Variant
+    Dim nFiles As Long
+    Dim nDirs As Long
+    Dim nTotal As Long
+    Dim nPos As Long
+    Dim i As Long
+    Dim j As Long
+    Dim sItem As String
+    Dim bIsDir As Boolean
+
+    aItems = oSFA.getFolderContents(sFolder, bSub)
+
+    If UBound(aItems) &lt; 0 Then
+        GCIM_Scan = Array()
+        Exit Function
+    End If
+
+    ReDim aFiles(UBound(aItems))
+    ReDim aDirs(UBound(aItems))
+
+    nFiles = 0
+    nDirs = 0
+
+    For i = 0 To UBound(aItems)
+
+        sItem = CStr(aItems(i))
+        bIsDir = False
+
+        If bSub Then bIsDir = oSFA.isFolder(sItem)
+
+        If bIsDir Then
+            aDirs(nDirs) = sItem
+            nDirs = nDirs + 1
+        ElseIf GCIM_IsImage(GCIM_Extension(sItem)) Then
+            aFiles(nFiles) = sItem
+            nFiles = nFiles + 1
+        End If
+
+    Next i
+
+    nTotal = nFiles
+
+    If nDirs &gt; 0 Then
+        ReDim aSubs(nDirs - 1)
+        For i = 0 To nDirs - 1
+            aSubs(i) = GCIM_Scan(aDirs(i), oSFA, True)
+            vTmp = aSubs(i)
+            nTotal = nTotal + UBound(vTmp) + 1
+        Next i
+    End If
+
+    If nTotal = 0 Then
+        GCIM_Scan = Array()
+        Exit Function
+    End If
+
+    ReDim aFinal(nTotal - 1)
+
+    For i = 0 To nFiles - 1
+        aFinal(i) = aFiles(i)
+    Next i
+
+    nPos = nFiles
+
+    For i = 0 To nDirs - 1
+        vTmp = aSubs(i)
+        For j = 0 To UBound(vTmp)
+            aFinal(nPos) = CStr(vTmp(j))
+            nPos = nPos + 1
+        Next j
+    Next i
+
+    GCIM_Scan = aFinal
+
+End Function
+
+
+' Stabilní řazení vkládáním; klíče se počítají jen jednou.
+' Názvy se řadí "přirozeně" (img2 před img10).
+Function GCIM_SortImages( _
+    aIn As Variant, _
+    sMode As String, _
+    bAsc As Boolean, _
+    oSFA As Object) As Variant
+
+    Dim n As Long
+    Dim i As Long
+    Dim j As Long
+    Dim aItems() As String
+    Dim aKeyS() As String
+    Dim aKeyN() As Double
+    Dim sCurItem As String
+    Dim sCurKey As String
+    Dim dCurNum As Double
+    Dim bText As Boolean
+    Dim nCmp As Integer
+
+    n = UBound(aIn) + 1
+
+    If n &lt; 2 Then
+        GCIM_SortImages = aIn
+        Exit Function
+    End If
+
+    ReDim aItems(n - 1)
+    ReDim aKeyS(n - 1)
+    ReDim aKeyN(n - 1)
+
+    bText = (sMode = "name")
+
+    For i = 0 To n - 1
+
+        aItems(i) = CStr(aIn(i))
+        aKeyS(i) = GCIM_NaturalKey(ConvertFromURL(aItems(i)))
+        aKeyN(i) = 0
+
+        On Error Resume Next
+        If sMode = "size" Then
+            aKeyN(i) = CDbl(oSFA.getSize(aItems(i)))
+        ElseIf sMode = "date" Then
+            aKeyN(i) = GCIM_DateNumber(oSFA.getDateTimeModified(aItems(i)))
+        End If
+        On Error GoTo 0
+
+    Next i
+
+    For i = 1 To n - 1
+
+        sCurItem = aItems(i)
+        sCurKey = aKeyS(i)
+        dCurNum = aKeyN(i)
+
+        j = i - 1
+
+        Do While j &gt;= 0
+
+            nCmp = GCIM_Compare(aKeyS(j), aKeyN(j), sCurKey, dCurNum, bText)
+            If Not bAsc Then nCmp = -nCmp
+
+            If nCmp &lt;= 0 Then Exit Do
+
+            aItems(j + 1) = aItems(j)
+            aKeyS(j + 1) = aKeyS(j)
+            aKeyN(j + 1) = aKeyN(j)
+
+            j = j - 1
+
+        Loop
+
+        aItems(j + 1) = sCurItem
+        aKeyS(j + 1) = sCurKey
+        aKeyN(j + 1) = dCurNum
+
+    Next i
+
+    GCIM_SortImages = aItems
+
+End Function
+
+
+Function GCIM_Compare( _
+    sA As String, dA As Double, _
+    sB As String, dB As Double, _
+    bText As Boolean) As Integer
+
+    If Not bText Then
+        If dA &lt; dB Then
+            GCIM_Compare = -1
+            Exit Function
+        End If
+        If dA &gt; dB Then
+            GCIM_Compare = 1
+            Exit Function
+        End If
+    End If
+
+    ' Stejná hodnota (nebo řazení podle názvu) – rozhoduje název.
+    GCIM_Compare = StrComp(sA, sB, 1)
+
+End Function
+
+
+Function GCIM_NaturalKey(sName As String) As String
+
+    Dim sRes As String
+    Dim sDigits As String
+    Dim sCh As String
+    Dim i As Long
+
+    sRes = ""
+    sDigits = ""
+
+    For i = 1 To Len(sName)
+
+        sCh = Mid(sName, i, 1)
+
+        If Asc(sCh) &gt;= 48 And Asc(sCh) &lt;= 57 Then
+
+            sDigits = sDigits &amp; sCh
+
+        Else
+
+            If sDigits &lt;&gt; "" Then
+                If Len(sDigits) &lt; 12 Then
+                    sRes = sRes &amp; String(12 - Len(sDigits), "0")
+                End If
+                sRes = sRes &amp; sDigits
+                sDigits = ""
+            End If
+
+            sRes = sRes &amp; LCase(sCh)
+
+        End If
+
+    Next i
+
+    If sDigits &lt;&gt; "" Then
+        If Len(sDigits) &lt; 12 Then
+            sRes = sRes &amp; String(12 - Len(sDigits), "0")
+        End If
+        sRes = sRes &amp; sDigits
+    End If
+
+    GCIM_NaturalKey = sRes
+
+End Function
+
+
+Function GCIM_DateNumber(aDate As Variant) As Double
+
+    On Error GoTo Failed
+
+    GCIM_DateNumber = _
+        CDbl(aDate.Year) * 10000000000# + _
+        CDbl(aDate.Month) * 100000000# + _
+        CDbl(aDate.Day) * 1000000# + _
+        CDbl(aDate.Hours) * 10000# + _
+        CDbl(aDate.Minutes) * 100# + _
+        CDbl(aDate.Seconds)
+
+    Exit Function
+
+Failed:
+
+    GCIM_DateNumber = 0
+
+End Function
+
+
+' ------------------------------------------------------------
+' POMOCNÉ FUNKCE
+' ------------------------------------------------------------
+
+Function GCIM_IsImage(sExt As String) As Boolean
+
+    Select Case LCase(Trim(sExt))
+
+        Case "jpg", "jpeg", "jfif", "png", "gif", "bmp", _
+             "tif", "tiff", "ico", "webp", "svg", "emf", "wmf"
+
+            GCIM_IsImage = True
+
+        Case Else
+
+            GCIM_IsImage = False
+
+    End Select
+
+End Function
+
+
+Function GCIM_Extension(sURL As String) As String
+
+    Dim sName As String
+    Dim i As Long
+
+    sName = GCIM_FileName(sURL)
+    GCIM_Extension = ""
+
+    For i = Len(sName) To 1 Step -1
+        If Mid(sName, i, 1) = "." Then
+            GCIM_Extension = LCase(Mid(sName, i + 1))
+            Exit Function
+        End If
+    Next i
+
+End Function
+
+
+' Název souboru bez přípony (pro popisek).
+Function GCIM_BaseName(sURL As String) As String
+
+    Dim sName As String
+    Dim i As Long
+
+    sName = GCIM_FileName(sURL)
+
+    For i = Len(sName) To 2 Step -1
+        If Mid(sName, i, 1) = "." Then
+            sName = Left(sName, i - 1)
+            Exit For
+        End If
+    Next i
+
+    GCIM_BaseName = sName
+
+End Function
+
+
+' Dekódovaný název souboru (bez %C5%99 apod.).
+Function GCIM_FileName(sURL As String) As String
+
+    Dim sName As String
+    Dim sCh As String
+    Dim i As Long
+
+    On Error Resume Next
+    sName = ConvertFromURL(sURL)
+    If Err &lt;&gt; 0 Or sName = "" Then sName = sURL
+    On Error GoTo 0
+
+    For i = Len(sName) To 1 Step -1
+        sCh = Mid(sName, i, 1)
+        If sCh = "/" Or sCh = "\" Then
+            sName = Mid(sName, i + 1)
+            Exit For
+        End If
+    Next i
+
+    GCIM_FileName = sName
+
+End Function
+
+
+' Přijme URL (file:///...) i běžnou systémovou cestu.
+Function GCIM_FolderURL(sText As String) As String
+
+    Dim s As String
+
+    s = Trim(sText)
+
+    If s = "" Then
+        GCIM_FolderURL = ""
+        Exit Function
+    End If
+
+    If LCase(Left(s, 7)) = "file://" Then
+        GCIM_FolderURL = s
+    Else
+        GCIM_FolderURL = ConvertToURL(s)
+    End If
+
+End Function
+
+
+Sub GCIM_Msg(sText As String, nType As Integer, sTitle As String)
+
+    If gGCIM_Quiet Then
+        gGCIM_Log = gGCIM_Log &amp; sText &amp; Chr(10) &amp; "----" &amp; Chr(10)
+    Else
+        MsgBox sText, nType, sTitle
+    End If
+
+End Sub
+
+' ============================================================
+' PŘEKLADY (i18n)
+'
+' Jazyk se vybírá automaticky podle jazyka rozhraní LibreOffice
+' (Nástroje &gt; Možnosti &gt; Nastavení jazyka &gt; Jazyky &gt; Uživatelské rozhraní).
+'
+' Pořadí hledání textu:
+'   1) soubor i18n/&lt;jazyk-ZEMĚ&gt;.txt, např. i18n/pt-br.txt
+'   2) soubor i18n/&lt;jazyk&gt;.txt, např. i18n/sk.txt
+'   3) vestavěná tabulka v modulu (GCIM_Embedded)
+'   4) angličtina (vestavěná)
+'   5) samotný klíč (aby chybějící překlad nikdy neshodil makro)
+'
+' Přidání nového jazyka = nový soubor i18n/xx.txt se stejnými
+' klíči jako en.txt. Do kódu se nesahá.
+' ============================================================
+
+Const GCIM_EXT_ID = "cz.greencabinet.gcimportimages"
+
+
+' Vrátí přeložený text. {0} a {1} se nahradí volitelnými parametry.
+Function GCIM_T(sKey As String, Optional vA As Variant, Optional vB As Variant) As String
+
+    Dim s As String
+
+    If Not gGCIM_Ready Then GCIM_InitStrings
+
+    s = GCIM_Find(gGCIM_TabLang, sKey)
+    If s = "" Then s = GCIM_Find(gGCIM_TabEn, sKey)
+    If s = "" Then s = sKey
+
+    s = Replace(s, "\n", Chr(10))
+
+    If Not IsMissing(vA) Then s = Replace(s, "{0}", CStr(vA))
+    If Not IsMissing(vB) Then s = Replace(s, "{1}", CStr(vB))
+
+    GCIM_T = s
+
+End Function
+
+
+Function GCIM_Find(sTab As String, sKey As String) As String
+
+    Dim sAll As String
+    Dim sRest As String
+    Dim nPos As Long
+    Dim nEnd As Long
+
+    GCIM_Find = ""
+
+    If sTab = "" Then Exit Function
+
+    sAll = Chr(10) &amp; sTab
+    nPos = InStr(sAll, Chr(10) &amp; sKey &amp; "=")
+
+    If nPos = 0 Then Exit Function
+
+    sRest = Mid(sAll, nPos + Len(sKey) + 2)
+    nEnd = InStr(sRest, Chr(10))
+
+    If nEnd &gt; 0 Then sRest = Left(sRest, nEnd - 1)
+
+    GCIM_Find = sRest
+
+End Function
+
+
+Sub GCIM_InitStrings()
+
+    Dim sLoc As String
+    Dim sLang As String
+    Dim s As String
+
+    sLoc = LCase(GCIM_Locale())
+    sLang = Left(sLoc, InStr(sLoc &amp; "-", "-") - 1)
+
+    gGCIM_TabEn = GCIM_Embedded("en")
+
+    s = GCIM_LoadFile(sLoc)
+    If s = "" Then s = GCIM_LoadFile(sLang)
+    If s = "" Then s = GCIM_Embedded(sLoc)
+    If s = "" Then s = GCIM_Embedded(sLang)
+
+    gGCIM_TabLang = s
+    gGCIM_Ready = True
+
+End Sub
+
+
+' Jazyk rozhraní LibreOffice, např. "cs-CZ". Při chybě "en-US".
+Function GCIM_Locale() As String
+
+    On Error GoTo Failed
+
+    Dim oProv As Object
+    Dim oAcc As Object
+    Dim aArg As New com.sun.star.beans.PropertyValue
+    Dim s As String
+
+    If gGCIM_ForceLang &lt;&gt; "" Then
+        GCIM_Locale = gGCIM_ForceLang
+        Exit Function
+    End If
+
+    oProv = CreateUnoService("com.sun.star.configuration.ConfigurationProvider")
+
+    aArg.Name = "nodepath"
+    aArg.Value = "/org.openoffice.Setup/L10N"
+
+    oAcc = oProv.createInstanceWithArguments( _
+        "com.sun.star.configuration.ConfigurationAccess", Array(aArg))
+
+    s = oAcc.getByName("ooLocale")
+    If s = "" Then s = oAcc.getByName("ooSetupSystemLocale")
+    If s = "" Then s = "en-US"
+
+    GCIM_Locale = s
+
+    Exit Function
+
+Failed:
+
+    GCIM_Locale = "en-US"
+
+End Function
+
+
+' Načte i18n/&lt;sName&gt;.txt z nainstalovaného rozšíření (UTF-8).
+' Vrací řádky "KLÍČ=text" oddělené Chr(10); bez souboru prázdný řetězec.
+Function GCIM_LoadFile(sName As String) As String
+
+    On Error GoTo Failed
+
+    Dim oPIP As Object
+    Dim oExp As Object
+    Dim oSFA As Object
+    Dim oStream As Object
+    Dim oTIS As Object
+    Dim sBase As String
+    Dim sURL As String
+    Dim sZip As String
+    Dim sLine As String
+    Dim sRes As String
+
+    GCIM_LoadFile = ""
+
+    If sName = "" Then Exit Function
+
+    oPIP = GetDefaultContext().getValueByName( _
+        "/singletons/com.sun.star.deployment.PackageInformationProvider")
+
+    sBase = oPIP.getPackageLocation(GCIM_EXT_ID)
+
+    If sBase = "" Then Exit Function
+
+    If Left(sBase, 20) = "vnd.sun.star.expand:" Then
+        oExp = GetDefaultContext().getValueByName( _
+            "/singletons/com.sun.star.util.theMacroExpander")
+        sBase = oExp.expandMacros(Mid(sBase, 21))
+    End If
+
+    sURL = sBase &amp; "/i18n/" &amp; sName &amp; ".txt"
+
+    oSFA = CreateUnoService("com.sun.star.ucb.SimpleFileAccess")
+
+    ' Sdílená instalace ukládá rozšíření jako soubor .oxt (zip).
+    If Not oSFA.exists(sURL) Then
+        sZip = Replace(sBase, "%", "%25")
+        sZip = Replace(sZip, ":", "%3A")
+        sZip = Replace(sZip, "/", "%2F")
+        sURL = "vnd.sun.star.zip://" &amp; sZip &amp; "/i18n/" &amp; sName &amp; ".txt"
+        If Not oSFA.exists(sURL) Then Exit Function
+    End If
+
+    oStream = oSFA.openFileRead(sURL)
+    oTIS = CreateUnoService("com.sun.star.io.TextInputStream")
+    oTIS.InputStream = oStream
+    oTIS.Encoding = "UTF-8"
+
+    sRes = ""
+
+    Do While Not oTIS.isEOF()
+
+        sLine = oTIS.readLine()
+
+        If Len(sLine) &gt; 0 Then
+            If Asc(Left(sLine, 1)) = 65279 Then sLine = Mid(sLine, 2)
+        End If
+
+        If Len(sLine) &gt; 0 Then
+            If Left(sLine, 1) &lt;&gt; "#" And InStr(sLine, "=") &gt; 1 Then
+                sRes = sRes &amp; sLine &amp; Chr(10)
+            End If
+        End If
+
+    Loop
+
+    oTIS.closeInput()
+
+    GCIM_LoadFile = sRes
+
+    Exit Function
+
+Failed:
+
+    gGCIM_LastErr = Err &amp; " " &amp; Error$ &amp; " @" &amp; Erl
+    GCIM_LoadFile = ""
+
+End Function
+
+
+' Vestavěné překlady (generuje se při sestavení z i18n/*.txt).
+Function GCIM_Embedded(sLang As String) As String
+
+    Dim s As String
+
+    s = ""
+
+    Select Case sLang
+
+        Case "en"
+            s = s &amp; "NAME=GC Image Import" &amp; Chr(10)
+            s = s &amp; "DESC=Bulk import of images from a folder into a Writer document. Optionally includes subfolders; automatic or custom width, spacing, file-name captions, natural sorting by name, size or date. Run it from the menu GC Tools &gt; Import images or from the toolbar / ribbon (Extension tab)." &amp; Chr(10)
+            s = s &amp; "MENU_GC=GC Tools (Writer)" &amp; Chr(10)
+            s = s &amp; "ITEM_IMPORT=Import images..." &amp; Chr(10)
+            s = s &amp; "TITLE=Green Cabinet – Image Import" &amp; Chr(10)
+            s = s &amp; "DLG_TITLE=Bulk image import" &amp; Chr(10)
+            s = s &amp; "LBL_FOLDER=Folder with images:" &amp; Chr(10)
+            s = s &amp; "BTN_BROWSE=Browse..." &amp; Chr(10)
+            s = s &amp; "CHK_SUB=Include subfolders" &amp; Chr(10)
+            s = s &amp; "GRP_SIZE=Image size" &amp; Chr(10)
+            s = s &amp; "OPT_AUTO=Automatic (shrink only images wider than the page)" &amp; Chr(10)
+            s = s &amp; "OPT_CUSTOM=Custom width (cm):" &amp; Chr(10)
+            s = s &amp; "GRP_LAYOUT=Layout" &amp; Chr(10)
+            s = s &amp; "LBL_SPACING=Spacing below image (cm):" &amp; Chr(10)
+            s = s &amp; "LBL_POS=Insert at:" &amp; Chr(10)
+            s = s &amp; "POS_END=End of document" &amp; Chr(10)
+            s = s &amp; "POS_CURSOR=After the paragraph with the cursor" &amp; Chr(10)
+            s = s &amp; "CHK_CAPTION=Add a caption with the file name below each image" &amp; Chr(10)
+            s = s &amp; "GRP_SORT=Sorting" &amp; Chr(10)
+            s = s &amp; "SORT_NAME=Name" &amp; Chr(10)
+            s = s &amp; "SORT_SIZE=Size" &amp; Chr(10)
+            s = s &amp; "SORT_DATE=Date modified" &amp; Chr(10)
+            s = s &amp; "OPT_ASC=Ascending" &amp; Chr(10)
+            s = s &amp; "OPT_DESC=Descending" &amp; Chr(10)
+            s = s &amp; "BTN_IMPORT=Import" &amp; Chr(10)
+            s = s &amp; "BTN_CANCEL=Cancel" &amp; Chr(10)
+            s = s &amp; "PICK_TITLE=Choose the folder with images" &amp; Chr(10)
+            s = s &amp; "CNT_SELECT=Choose a folder with images." &amp; Chr(10)
+            s = s &amp; "CNT_NOFOLDER=The folder does not exist or is not accessible." &amp; Chr(10)
+            s = s &amp; "CNT_NOTFOLDER=The path is not a folder." &amp; Chr(10)
+            s = s &amp; "CNT_FOUND=Images found: {0}" &amp; Chr(10)
+            s = s &amp; "CNT_FAIL=Could not count the images." &amp; Chr(10)
+            s = s &amp; "MSG_NO_DOC=No document is open." &amp; Chr(10)
+            s = s &amp; "MSG_WRITER_ONLY=This macro can only be run in a Writer document." &amp; Chr(10)
+            s = s &amp; "MSG_START_ERR=The GC_IMPORT_IMAGES macro could not be started." &amp; Chr(10)
+            s = s &amp; "ERR_LABEL=Error: {0}" &amp; Chr(10)
+            s = s &amp; "MSG_DLG_ERR=Error in the dialog:" &amp; Chr(10)
+            s = s &amp; "MSG_SELECT_FIRST=Choose a folder with images first." &amp; Chr(10)
+            s = s &amp; "MSG_FOLDER_UNAVAIL=The selected folder is not accessible." &amp; Chr(10)
+            s = s &amp; "MSG_NOT_FOLDER=The path is not a folder." &amp; Chr(10)
+            s = s &amp; "MSG_NO_IMAGES=No images were found in the selected folder." &amp; Chr(10)
+            s = s &amp; "MSG_BAD_WIDTH=Enter a valid image width in centimeters." &amp; Chr(10)
+            s = s &amp; "MSG_BAD_AREA=Could not determine the usable page area." &amp; Chr(10)
+            s = s &amp; "UNDO_NAME=Image import" &amp; Chr(10)
+            s = s &amp; "MSG_DONE=Image import finished.\n\nImages found: {0}\nImages inserted: {1}" &amp; Chr(10)
+            s = s &amp; "MSG_FAILED=Could not insert ({0}):" &amp; Chr(10)
+            s = s &amp; "MSG_IMPORT_ERR=An error occurred during the image import." &amp; Chr(10)
+            s = s &amp; "TOOLBAR_NAME=Import images" &amp; Chr(10)
+
+    End Select
+
+    GCIM_Embedded = s
+
+End Function
+
+
+</script:module>

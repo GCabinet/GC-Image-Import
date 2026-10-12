@@ -1,0 +1,1 @@
+Bulk import of images from a folder into a Writer document. Optionally includes subfolders; automatic or custom width, spacing, file-name captions, natural sorting by name, size or date. Run it from the menu GC Tools > Import images or from the toolbar / ribbon (Extension tab).

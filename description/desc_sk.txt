@@ -1,0 +1,1 @@
+Hromadný import obrázkov z priečinka do dokumentu Writer. Voliteľne vrátane podpriečinkov, automatická alebo vlastná šírka, medzera, popisok s názvom súboru, prirodzené radenie podľa názvu, veľkosti alebo dátumu. Spustenie: ponuka Nástroje GC > Import obrázkov, alebo ikona na paneli nástrojov / v páse kariet (karta Rozšírenie).
